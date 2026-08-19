@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+queue/*.json
+reports/*
+!reports/.gitkeep
+.pytest_cache/
+ratelimit.json
+cloudflared
+cloudflared.log
+
+!queue/.gitkeep

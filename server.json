@@ -1,0 +1,14 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.wtaylorwilson/shipcheck",
+  "title": "ShipCheck",
+  "description": "Independent preview-URL QA for coding agents. Playwright heuristics, pass/fail pack.",
+  "version": "0.1.0",
+  "websiteUrl": "https://realtor-all-enclosed-altered.trycloudflare.com",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://realtor-all-enclosed-altered.trycloudflare.com/mcp"
+    }
+  ]
+}

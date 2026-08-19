@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShipCheck — independent preview QA</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 16px/1.45 system-ui, sans-serif; max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; margin: 0 0 .4rem; }
+  h2 { font-size: 1.05rem; margin: 1.6rem 0 .4rem; }
+  p, li { color: inherit; }
+  .muted { opacity: .75; font-size: .92rem; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .86rem; }
+  pre { background: color-mix(in srgb, CanvasText 8%, Canvas); padding: .8rem 1rem; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+  th, td { text-align: left; padding: .35rem .4rem; border-bottom: 1px solid color-mix(in srgb, CanvasText 15%, Canvas); vertical-align: top; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+<h1>ShipCheck v0</h1>
+<p>Independent preview-URL QA for coding agents. You POST a <strong>public https</strong> preview URL plus acceptance stories. We run Playwright heuristics, screenshot each story, and return a pass/fail evidence pack. Failures stay <code>needs_review</code> until a human (or this agent looking at the page) adds a short note.</p>
+<p class="muted">Public preview. No billing yet. Credits (Polar) later. Localhost and private URLs are rejected.</p>
+
+<h2>Price intent (not charged)</h2>
+<table>
+  <tr><th>Run</th><th>USD</th></tr>
+  <tr><td>Desktop or mobile, 1–4 stories</td><td>$6</td></tr>
+  <tr><td>Both viewports, or 5–8 stories</td><td>$10</td></tr>
+</table>
+<p class="muted">Prepaid credits coming. Timeouts, SSRF rejects, and crashes will not be billed. v0 accepts a missing API key and does not debit.</p>
+
+<h2>Three tool calls</h2>
+<table>
+  <tr><th>Tool</th><th>REST</th><th>What</th></tr>
+  <tr><td><code>qa_preview</code></td><td><code>POST /qa_preview</code></td><td>Queue a run. Body: <code>{url, stories[{id, steps[], expect}], viewport}</code>. Returns <code>job_id</code>.</td></tr>
+  <tr><td><code>qa_status</code></td><td><code>GET /qa_status/{job_id}</code></td><td>queued / running / pass / needs_review / error</td></tr>
+  <tr><td><code>qa_get_report</code></td><td><code>GET /qa_get_report/{job_id}</code></td><td>Evidence pack: heuristics, screenshots, optional <code>human_note</code></td></tr>
+</table>
+<p class="muted">Also: <code>POST /qa_note/{job_id}</code> (MCP <code>qa_note</code>) to close <code>needs_review</code>. Streamable-HTTP MCP is <code>POST /mcp</code> on this same host. Health: <code>GET /health</code>.</p>
+
+<h2>Rules</h2>
+<ul>
+  <li><strong>https only.</strong> Public preview URLs. Vercel/Netlify-style links are the point.</li>
+  <li><strong>Localhost / private rejected.</strong> <code>127.0.0.1</code>, RFC1918, link-local, CGNAT, metadata IPs, <code>file://</code>, embedded credentials, redirect-to-private.</li>
+  <li>v0 public preview: about <strong>20 preview jobs per day per IP</strong> so this URL is not an open screenshot farm.</li>
+</ul>
+
+<h2>mcp.json</h2>
+<p>Cursor: add to <code>.cursor/mcp.json</code> (omit <code>type</code>; a <code>url</code> is streamable HTTP). Key optional in v0.</p>
+<pre id="mcp-snippet">{
+  "mcpServers": {
+    "shipcheck": {
+      "url": "https://THIS-HOST/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}</pre>
+
+<h2>curl</h2>
+<pre id="curl-snippet">curl -sS -X POST https://THIS-HOST/qa_preview \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/","stories":[{"id":"home","steps":["open"],"expect":"Example Domain"}]}'</pre>
+
+<p class="muted">ShipCheck does not log into your GitHub, does not scrape behind auth walls, and does not solve CAPTCHAs. No marketplace. No dashboard.</p>
+<script>
+(function () {
+  var origin = location.origin;
+  var mcp = {
+    mcpServers: {
+      shipcheck: {
+        url: origin + "/mcp",
+        headers: { Authorization: "Bearer YOUR_API_KEY" }
+      }
+    }
+  };
+  document.getElementById("mcp-snippet").textContent = JSON.stringify(mcp, null, 2);
+  document.getElementById("curl-snippet").textContent =
+    "curl -sS -X POST " + origin + "/qa_preview \\\n" +
+    "  -H 'Content-Type: application/json' \\\n" +
+    "  -d '{\"url\":\"https://example.com/\",\"stories\":[{\"id\":\"home\",\"steps\":[\"open\"],\"expect\":\"Example Domain\"}]}'";
+})();
+</script>
+</body>
+</html>
