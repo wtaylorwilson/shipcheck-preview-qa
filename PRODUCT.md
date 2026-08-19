@@ -1,6 +1,6 @@
 # ShipCheck
 
-**One-liner:** An agent posts a public preview URL plus acceptance stories; we run Playwright heuristics (and a human writes a note on failures) and return a pass/fail evidence pack the coding agent cannot fake by grading itself.
+**One-liner:** An agent posts a public preview URL plus `click:`/`fill:`/`see:` stories; we walk the product, write a findings brief, and return a pass/fail evidence pack the coding agent cannot fake by grading itself.
 
 ## Who this is for
 
@@ -14,10 +14,24 @@ Same tools on REST and at `POST /mcp`. Public: `https://realtor-all-enclosed-alt
 |---|---|---|
 | `qa_preview` | `POST /qa_preview` | Queue a run: `{url, stories[{id, steps[], expect}], viewport, auth_hint?}` |
 | `qa_status` | `GET /qa_status/{job_id}` | queued / running / pass / needs_review / error |
-| `qa_get_report` | `GET /qa_get_report/{job_id}` | Evidence pack: heuristics, screenshots, optional `human_note` |
+| `qa_get_report` | `GET /qa_get_report/{job_id}` | Evidence pack: heuristics, screenshots, `human_note`, `findings[]` |
 | `qa_note` | `POST /qa_note/{job_id}` | Close `needs_review`: `{human_note, verdict: pass\|fail}` |
 
+
 `viewport`: `desktop` | `mobile` | `both`. Default `desktop`.
+
+## What a useful run looks like
+
+Homepage `expect`-only ("text exists → pass") is **not a pass**. A useful run requires `click:` / `fill:` / `see:` stories that exercise the product (book, cart, checkout, dates, guest fields). If heuristics are green but stories never left the homepage and never executed a `click:`/`fill:` step, status is `needs_review` with `human_note` containing `smoke only — no interaction`.
+
+Every finished heuristic job writes:
+
+- `human_note` — short findings brief: verdict, what was actually clicked, what failed, what was only a smoke check. Not "looks fine".
+- `report.findings` — `[{severity, title, detail}]` when there are `step_errors` or `expect_missing`, so an agent can consume issues without reading a paragraph.
+
+Clicks use the first **visible** match (`click:text=Book now` ignores a hidden mobile-nav CTA and hits the hero/sticky button).
+
+Third-party analytics / gtag / `/g/collect` 429s are recorded on the story but do not fail it or the job.
 
 ## Pricing intent
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -154,6 +155,14 @@ def test_qa_note_rejects_queued() -> None:
     assert r.status_code == 409
 
 
+def test_head_landing_and_health() -> None:
+    r = client.head("/")
+    assert r.status_code == 200
+    assert "text/html" in r.headers.get("content-type", "")
+    h = client.head("/health")
+    assert h.status_code == 200
+
+
 def test_landing_page() -> None:
     r = client.get("/")
     assert r.status_code == 200
@@ -177,7 +186,7 @@ def test_rate_limit_public_ip() -> None:
         "stories": [{"id": "home", "steps": ["open"], "expect": "Example Domain"}],
         "viewport": "desktop",
     }
-    headers = {"CF-Connecting-IP": "198.51.100.77"}
+    headers = {"CF-Connecting-IP": f"198.51.100.{(uuid.uuid4().int % 200) + 20}"}
     try:
         r1 = client.post("/qa_preview", json=payload, headers=headers)
         r2 = client.post("/qa_preview", json=payload, headers=headers)

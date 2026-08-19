@@ -1,6 +1,6 @@
 # ShipCheck v0
 
-Independent preview-URL QA for coding agents. An agent POSTs a public **https** preview URL plus acceptance stories. We run Playwright heuristics, screenshot each story, and return a pass/fail evidence pack. Failures stay `needs_review` until a human (or this agent looking at the page) adds a short note.
+Independent preview-URL QA for coding agents. An agent POSTs a public **https** preview URL plus `click:`/`fill:`/`see:` stories. We walk the product in Playwright, screenshot each story, write a findings brief, and return a pass/fail evidence pack. Homepage expect-only is `needs_review` (`smoke only — no interaction`), not a pass.
 
 The same model that wrote the UI is a bad judge of the UI. That is the product.
 
@@ -26,20 +26,28 @@ SHIPCHECK_INLINE_WORKER=0 .venv/bin/python -m shipcheck serve --port 8787
 
 Health: `GET http://127.0.0.1:8787/health`
 
-Public (Cloudflare quick tunnel, this box, Wed Aug 19 2026): **https://realtor-all-enclosed-altered.trycloudflare.com**
-Same process serves `GET /` (landing), REST, and `POST /mcp`. URL also in `PUBLIC_URL.txt`. Quick tunnels die if `cloudflared` stops.
+Public (localhost.run, this box, Wed Aug 19 2026 ET): **https://91526eb1894540.lhr.life**
+Same process serves `GET /` (landing), REST, and `POST /mcp`. Preferred URL in `PUBLIC_URL.txt` (backup Cloudflare quick tunnel, often blocked on consumer ISPs: `https://realtor-all-enclosed-altered.trycloudflare.com`). localhost.run dies if the ssh reverse tunnel stops; keep `ssh -R 80:localhost:8787 nokey@localhost.run` running.
 
 Jobs live at `/workspace/shipcheck/queue/{job_id}.json`. Reports and screenshots at `/workspace/shipcheck/reports/`.
 
 ## Example request / response
 
 ```bash
-curl -sS -X POST https://realtor-all-enclosed-altered.trycloudflare.com/qa_preview \
+curl -sS -X POST https://91526eb1894540.lhr.life/qa_preview \
   -H 'Content-Type: application/json' \
   -d '{
     "url": "https://example.com/",
     "stories": [
-      {"id": "home", "steps": ["open homepage"], "expect": "Example Domain"}
+      {
+        "id": "checkout",
+        "steps": [
+          "click:text=Book now",
+          "fill:#email|guest@example.com",
+          "see:Order total"
+        ],
+        "expect": "Order total"
+      }
     ],
     "viewport": "desktop"
   }'
@@ -58,15 +66,17 @@ Response:
 ```
 
 ```bash
-curl -sS https://realtor-all-enclosed-altered.trycloudflare.com/qa_status/sc_ab12cd34ef56
-curl -sS https://realtor-all-enclosed-altered.trycloudflare.com/qa_get_report/sc_ab12cd34ef56
+curl -sS https://91526eb1894540.lhr.life/qa_status/sc_ab12cd34ef56
+curl -sS https://91526eb1894540.lhr.life/qa_get_report/sc_ab12cd34ef56
 ```
 
-Terminal statuses: `pass` (all heuristics green, no human required) or `needs_review` (heuristic failures listed; a later pass adds `human_note` via `POST /qa_note/{job_id}` or MCP `qa_note`). `error` is our infrastructure (timeout, crash, unsafe URL) and is not billed.
+Terminal statuses: `pass` (heuristics green **and** stories executed `click:`/`fill:` — not homepage smoke) or `needs_review` (heuristic failures, **or** smoke-only with no interaction). Every finished job writes `human_note` (verdict, what was clicked, what failed, smoke checks) and `report.findings[]` `{severity, title, detail}` when steps or expects miss. A later human can still overwrite the note via `POST /qa_note/{job_id}` or MCP `qa_note`. `error` is our infrastructure (timeout, crash, unsafe URL) and is not billed.
 
 Optional headers for later billing: `Authorization: Bearer <key>` or `X-Api-Key`. v0 accepts missing keys and does not debit.
 
-Optional story steps (otherwise treated as notes): `click:css=.buy`, `click:text=Sign in`, `fill:#email|user@example.com`, `wait:1000`, `see:Order total`.
+Story steps (required for a real pass; otherwise treated as notes): `click:css=.buy`, `click:text=Sign in`, `fill:#email|user@example.com`, `wait:1000`, `see:Order total`. `click:` prefers a **visible** match (hidden mobile-nav CTAs lose to the hero/sticky button). Analytics/gtag/collect 429s are recorded but do not fail the job.
+
+Homepage expect-only (`steps: ["open homepage"], expect: "Welcome"`) is **not a pass** — the report will say `smoke only — no interaction`.
 
 See `examples/sample_report.json` for the evidence-pack shape.
 
@@ -78,7 +88,7 @@ SSRF tests (no live target required):
 
 ```bash
 cd /workspace/shipcheck
-python -m pytest tests/test_ssrf.py tests/test_api.py -q
+python -m pytest tests/test_ssrf.py tests/test_api.py tests/test_runner.py -q
 ```
 
 ## Cursor mcp.json
@@ -89,7 +99,7 @@ Streamable-HTTP MCP is served at `POST /mcp` (same process as REST). Tools: `qa_
 {
   "mcpServers": {
     "shipcheck": {
-      "url": "https://realtor-all-enclosed-altered.trycloudflare.com/mcp",
+      "url": "https://91526eb1894540.lhr.life/mcp",
       "headers": {
         "Authorization": "Bearer YOUR_API_KEY"
       }
@@ -98,7 +108,7 @@ Streamable-HTTP MCP is served at `POST /mcp` (same process as REST). Tools: `qa_
 }
 ```
 
-v0 accepts a missing key and does not debit. Same file lives at `examples/mcp.json`. Server must be running (`python -m shipcheck serve --host 127.0.0.1 --port 8787`). Public URL is a Cloudflare quick tunnel in front of that process.
+v0 accepts a missing key and does not debit. Same file lives at `examples/mcp.json`. Server must be running (`python -m shipcheck serve --host 127.0.0.1 --port 8787`). Public URL is a localhost.run ssh reverse tunnel in front of that process (Cloudflare quick tunnel kept as backup).
 
 Landing page: `GET /` (HTML in `shipcheck/landing.html`). Public preview rate limit: **20 `qa_preview` jobs/day/IP** (loopback unlimited). `SHIPCHECK_PREVIEW_LIMIT_PER_IP` overrides; `0` disables.
 

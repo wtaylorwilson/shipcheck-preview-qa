@@ -53,8 +53,10 @@ TOOLS: list[dict[str, Any]] = [
         "name": "qa_preview",
         "description": (
             "Queue an independent Playwright QA run against a public https preview URL. "
-            "Returns a job_id. Poll qa_status; fetch qa_get_report when status is "
-            "pass or needs_review. https only; localhost and private IPs are rejected."
+            "Stories should use click:/fill:/see: — homepage expect-only is smoke "
+            "(needs_review, not pass). Returns a job_id. Poll qa_status; fetch "
+            "qa_get_report when status is pass or needs_review. Report includes "
+            "human_note and findings[]. https only; localhost and private IPs are rejected."
         ),
         "inputSchema": {
             "type": "object",
@@ -143,7 +145,8 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "qa_get_report",
         "description": (
-            "Evidence pack for a job: heuristics, screenshot paths, optional human_note. "
+            "Evidence pack for a job: heuristics, screenshot paths, human_note "
+            "(always written after heuristics), and findings[{severity,title,detail}]. "
             "Call when qa_status is pass or needs_review."
         ),
         "inputSchema": {
@@ -293,8 +296,9 @@ def _handle_method(method: str, params: Any, api_key: str | None, client_ip: str
             "serverInfo": {"name": "shipcheck", "version": __version__},
             "instructions": (
                 "Independent preview-URL QA. Call qa_preview with a public https URL and "
-                "stories, poll qa_status, then qa_get_report. On needs_review, qa_note "
-                "attaches a human/agent verdict."
+                "click:/fill:/see: stories (homepage expect-only is smoke, not a pass), "
+                "poll qa_status, then qa_get_report for human_note + findings[]. "
+                "On needs_review, qa_note can attach a later human/agent verdict."
             ),
         }
     if method == "ping":

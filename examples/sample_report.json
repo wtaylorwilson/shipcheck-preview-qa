@@ -9,9 +9,16 @@
   "started_at": "2026-08-19T13:00:02Z",
   "finished_at": "2026-08-19T13:00:18Z",
   "error": null,
-  "human_note": null,
+  "human_note": "Verdict: needs_review. Clicked: checkout: clicked text=Checkout. Failed: checkout[desktop]: 1 console error(s); suspicious visible text: TypeError; expect not found: Order total. 1 structured finding(s).",
   "report": {
-    "summary": { "n_stories": 1, "n_failed": 1, "n_passed": 0 },
+    "summary": { "n_stories": 1, "n_failed": 1, "n_passed": 0, "smoke_only": false },
+    "findings": [
+      {
+        "severity": "high",
+        "title": "checkout (desktop): expect missing",
+        "detail": "'Order total' was not visible after the story"
+      }
+    ],
     "stories": [
       {
         "id": "checkout",
@@ -25,6 +32,7 @@
         "suspicious_text": ["TypeError"],
         "expect_missing": ["Order total"],
         "step_errors": [],
+        "actions": ["clicked text=Checkout"],
         "screenshot": "reports/sc_example0001/checkout-desktop.png",
         "failures": [
           "1 console error(s)",

@@ -30,7 +30,7 @@ pytestmark = pytest.mark.live
 
 
 @pytest.mark.skipif(not _chromium_ok(), reason="Playwright Chromium not installed")
-def test_example_com_desktop_pass() -> None:
+def test_example_com_desktop_smoke_needs_review() -> None:
     job = create_job(
         {
             "url": "https://example.com/",
@@ -46,13 +46,17 @@ def test_example_com_desktop_pass() -> None:
         }
     )
     done = run_job(job)
-    assert done["status"] == "pass", done
+    # Homepage expect-only is smoke, not a pass.
+    assert done["status"] == "needs_review", done
+    assert "smoke only — no interaction" in (done.get("human_note") or "")
     stories = done["report"]["stories"]
     assert len(stories) == 1
     assert stories[0]["http_status"] == 200
     assert stories[0]["empty_body"] is False
     assert stories[0]["expect_missing"] == []
+    assert stories[0]["status"] == "pass"  # heuristics green; job is still smoke
     assert stories[0]["screenshot"]
+    assert done["report"]["summary"].get("smoke_only") is True
     shot = "/workspace/shipcheck/" + stories[0]["screenshot"]
     assert os.path.isfile(shot)
     assert os.path.getsize(shot) > 1000

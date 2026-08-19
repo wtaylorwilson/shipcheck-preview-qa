@@ -22,6 +22,22 @@ SUSPICIOUS = re.compile(
     re.IGNORECASE,
 )
 
+# Third-party analytics / tag-manager noise. Recorded, but not a story failure.
+ANALYTICS_NOISE = re.compile(
+    r"google-analytics\.com|"
+    r"googletagmanager\.com|"
+    r"analytics\.google\.com|"
+    r"/g/collect\b|"
+    r"/gtag/js|"
+    r"googleadservices\.com|"
+    r"doubleclick\.net",
+    re.IGNORECASE,
+)
+CONSOLE_429 = re.compile(
+    r"status of 429|\bHTTP 429\b|net::ERR_[A-Z0-9_]*429",
+    re.IGNORECASE,
+)
+
 VIEWPORTS = {
     "desktop": {"width": 1280, "height": 800, "is_mobile": False},
     "mobile": {"width": 390, "height": 844, "is_mobile": True},
@@ -39,43 +55,88 @@ def _collect_suspicious(text: str) -> list[str]:
     return hits
 
 
-def _run_structured_step(page, step: str) -> str | None:
-    """Execute click:/fill:/wait:/see: steps. Other text is a no-op note."""
+def is_analytics_noise(text: str) -> bool:
+    return bool(ANALYTICS_NOISE.search(text or ""))
+
+
+def actionable_console_errors(
+    console_errors: list[str],
+    failed_network: list[str] | None = None,
+) -> list[str]:
+    """Console errors that should fail a story. Analytics / 429 noise is dropped."""
+    failed_network = failed_network or []
+    analytics_net = any(is_analytics_noise(x) for x in failed_network)
+    out: list[str] = []
+    for err in console_errors:
+        if is_analytics_noise(err):
+            continue
+        if CONSOLE_429.search(err or ""):
+            continue
+        if analytics_net and re.search(r"Failed to load resource|net::ERR_", err or "", re.I):
+            continue
+        out.append(err)
+    return out
+
+
+def _base_locator(page, sel: str):
+    if sel.startswith("text="):
+        return page.get_by_text(sel[5:].strip(), exact=False)
+    return page.locator(sel)
+
+
+def prefer_visible(loc):
+    """Return a locator restricted to visible matches when Playwright supports it."""
+    filt = getattr(loc, "filter", None)
+    if callable(filt):
+        try:
+            return loc.filter(visible=True)
+        except TypeError:
+            return loc
+    return loc
+
+
+def click_visible(page, sel: str, timeout: int = 5000) -> None:
+    """Click the first *visible* match. Hidden mobile-nav CTAs must not win."""
+    prefer_visible(_base_locator(page, sel)).first.click(timeout=timeout)
+
+
+def _run_structured_step(page, step: str) -> tuple[str | None, str | None]:
+    """Execute click:/fill:/wait:/see: steps.
+
+    Returns (action, error). Notes and empty steps return (None, None).
+    """
     raw = (step or "").strip()
     if not raw:
-        return None
+        return None, None
     lower = raw.lower()
     try:
         if lower.startswith("click:"):
             sel = raw.split(":", 1)[1].strip()
-            if sel.startswith("text="):
-                page.get_by_text(sel[5:].strip(), exact=False).first.click(timeout=5000)
-            else:
-                page.locator(sel).first.click(timeout=5000)
-            return None
+            click_visible(page, sel, timeout=5000)
+            return f"clicked {sel}", None
         if lower.startswith("fill:"):
             rest = raw.split(":", 1)[1]
             if "|" not in rest:
-                return "fill: needs selector|value"
+                return None, "fill: needs selector|value"
             sel, value = rest.split("|", 1)
             page.locator(sel.strip()).first.fill(value, timeout=5000)
-            return None
+            return f"filled {sel.strip()}", None
         if lower.startswith("wait:"):
             rest = raw.split(":", 1)[1].strip()
             if rest.isdigit():
                 page.wait_for_timeout(min(int(rest), 10000))
             else:
                 page.locator(rest).first.wait_for(timeout=8000)
-            return None
+            return f"waited {rest}", None
         if lower.startswith("see:"):
             needle = raw.split(":", 1)[1].strip()
             body = page.inner_text("body") or ""
             if needle.lower() not in body.lower():
-                return f"see: not found: {needle!r}"
-            return None
+                return None, f"see: not found: {needle!r}"
+            return f"saw {needle}", None
     except Exception as exc:  # noqa: BLE001 — step failures become heuristic notes
-        return f"step failed ({raw[:80]}): {exc}"
-    return None
+        return None, f"step failed ({raw[:80]}): {exc}"
+    return None, None
 
 
 def _story_result(
@@ -92,6 +153,7 @@ def _story_result(
     step_errors: list[str],
     screenshot: str | None,
     ssrf: list[str],
+    actions: list[str] | None = None,
 ) -> dict[str, Any]:
     failures: list[str] = []
     if ssrf:
@@ -102,8 +164,9 @@ def _story_result(
         failures.append(f"HTTP {http_status}")
     if empty_body:
         failures.append("empty body")
-    if console_errors:
-        failures.append(f"{len(console_errors)} console error(s)")
+    actionable = actionable_console_errors(console_errors, failed_network)
+    if actionable:
+        failures.append(f"{len(actionable)} console error(s)")
     # Main-document network failures already covered by HTTP status.
     # Subresource requestfailed is recorded; fail the story if any document failed.
     doc_fails = [f for f in failed_network if f.startswith("document ")]
@@ -128,9 +191,113 @@ def _story_result(
         "suspicious_text": suspicious_text,
         "expect_missing": expect_missing,
         "step_errors": step_errors,
+        "actions": list(actions or []),
         "screenshot": screenshot,
         "failures": failures,
     }
+
+
+def build_findings(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Structured findings for step_errors / expect_missing (agent-consumable)."""
+    findings: list[dict[str, Any]] = []
+    for r in results:
+        sid = r.get("id") or "story"
+        vp = r.get("viewport") or ""
+        prefix = f"{sid}" + (f" ({vp})" if vp else "")
+        for err in r.get("step_errors") or []:
+            findings.append(
+                {
+                    "severity": "high",
+                    "title": f"{prefix}: step failed",
+                    "detail": str(err),
+                }
+            )
+        for miss in r.get("expect_missing") or []:
+            findings.append(
+                {
+                    "severity": "high",
+                    "title": f"{prefix}: expect missing",
+                    "detail": f"{miss!r} was not visible after the story",
+                }
+            )
+    return findings
+
+
+def is_smoke_only(stories: list[dict[str, Any]], results: list[dict[str, Any]]) -> bool:
+    """True when heuristics are green but we never clicked or filled."""
+    if any(r.get("status") == "fail" for r in results):
+        return False
+    for r in results:
+        for action in r.get("actions") or []:
+            al = str(action).lower()
+            if al.startswith("clicked ") or al.startswith("filled "):
+                return False
+    return True
+
+
+def compose_human_note(
+    *,
+    status: str,
+    results: list[dict[str, Any]],
+    smoke: bool,
+    findings: list[dict[str, Any]],
+) -> str:
+    """Short findings brief — not 'looks fine'."""
+    acted: list[str] = []
+    for r in results:
+        sid = r.get("id") or "story"
+        for action in r.get("actions") or []:
+            acted.append(f"{sid}: {action}")
+    failed: list[str] = []
+    for r in results:
+        if r.get("status") != "fail":
+            continue
+        bits = r.get("failures") or []
+        failed.append(
+            f"{r.get('id')}[{r.get('viewport')}]: " + "; ".join(str(b) for b in bits[:4])
+        )
+    parts = [f"Verdict: {status}."]
+    parts.append("Clicked: " + ("; ".join(acted[:16]) if acted else "(none)") + ".")
+    parts.append("Failed: " + (" | ".join(failed[:8]) if failed else "(none)") + ".")
+    if smoke:
+        parts.append("smoke only — no interaction")
+    else:
+        idle = [r.get("id") for r in results if not r.get("actions")]
+        if idle:
+            parts.append(
+                "Smoke checks (no click:/fill:): "
+                + ", ".join(str(s) for s in idle[:8])
+                + "."
+            )
+    if findings:
+        parts.append(f"{len(findings)} structured finding(s).")
+    return " ".join(parts)[:4000]
+
+
+def finalize_job_report(
+    *,
+    results: list[dict[str, Any]],
+    stories: list[dict[str, Any]],
+) -> tuple[str, str, dict[str, Any]]:
+    """Decide job status, write the findings brief, attach report JSON."""
+    any_fail = any(r.get("status") == "fail" for r in results)
+    findings = build_findings(results)
+    smoke = is_smoke_only(stories, results)
+    status = "needs_review" if (any_fail or smoke) else "pass"
+    note = compose_human_note(
+        status=status, results=results, smoke=smoke, findings=findings
+    )
+    report = {
+        "stories": results,
+        "summary": {
+            "n_stories": len(results),
+            "n_failed": sum(1 for r in results if r.get("status") == "fail"),
+            "n_passed": sum(1 for r in results if r.get("status") == "pass"),
+            "smoke_only": smoke,
+        },
+        "findings": findings,
+    }
+    return status, note, report
 
 
 def run_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -227,7 +394,6 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
         save_job(job)
         return job
 
-    any_fail = any(r.get("status") == "fail" for r in results)
     # Infrastructure ok → debit hook (no-op in v0). Heuristic fails are billed.
     debit_result = debit(
         api_key=job.get("api_key"),
@@ -238,16 +404,10 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     job["billed"] = debit_result.billed
     job["billing_reason"] = debit_result.reason
     job["price_usd"] = debit_result.price_usd
-    job["status"] = "needs_review" if any_fail else "pass"
-    job["human_note"] = None
-    job["report"] = {
-        "stories": results,
-        "summary": {
-            "n_stories": len(results),
-            "n_failed": sum(1 for r in results if r.get("status") == "fail"),
-            "n_passed": sum(1 for r in results if r.get("status") == "pass"),
-        },
-    }
+    status, note, report = finalize_job_report(results=results, stories=stories)
+    job["status"] = status
+    job["human_note"] = note
+    job["report"] = report
     job["finished_at"] = utcnow()
     job["error"] = None
     save_job(job)
@@ -276,8 +436,22 @@ def _run_one_story(
     final_url: str | None = None
 
     def on_console(msg) -> None:
-        if msg.type == "error":
-            console_errors.append(msg.text[:500])
+        if msg.type != "error":
+            return
+        loc_url = ""
+        try:
+            loc = msg.location
+            if isinstance(loc, dict):
+                loc_url = str(loc.get("url") or "")
+            elif loc is not None:
+                loc_url = str(getattr(loc, "url", "") or "")
+        except Exception:
+            loc_url = ""
+        text = (msg.text or "")[:500]
+        if loc_url:
+            console_errors.append(f"{text} [{loc_url[:180]}]")
+        else:
+            console_errors.append(text)
 
     def on_pageerror(err) -> None:
         console_errors.append(str(err)[:500])
@@ -317,6 +491,7 @@ def _run_one_story(
     page.route("**/*", route_guard)
 
     step_errors: list[str] = []
+    actions: list[str] = []
     body_text = ""
     empty_body = True
     screenshot_rel = None
@@ -326,7 +501,9 @@ def _run_one_story(
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
         for step in story.get("steps") or []:
-            err = _run_structured_step(page, step)
+            action, err = _run_structured_step(page, step)
+            if action:
+                actions.append(action)
             if err:
                 step_errors.append(err)
         try:
@@ -372,4 +549,5 @@ def _run_one_story(
         step_errors=step_errors,
         screenshot=screenshot_rel,
         ssrf=ssrf_hits,
+        actions=actions,
     )
