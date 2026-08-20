@@ -1,6 +1,6 @@
 # ShipCheck v0
 
-Independent preview-URL QA for coding agents. An agent POSTs a public **https** preview URL plus `click:`/`fill:`/`see:` stories. We walk the product in Playwright, screenshot each story, write a findings brief, and return a pass/fail evidence pack. Homepage expect-only is `needs_review` (`smoke only — no interaction`), not a pass.
+Independent preview-URL QA for coding agents. An agent POSTs a public **https** preview URL plus a `goal`/`charter` (human-equivalent QA) or `click:`/`fill:`/`see:` stories. We walk the product in Playwright, screenshot, write a findings brief, and return a pass/fail evidence pack. Homepage expect-only is `needs_review` (`smoke only — no interaction`), not a pass.
 
 The same model that wrote the UI is a bad judge of the UI. That is the product.
 
@@ -32,6 +32,20 @@ Same process serves `GET /` (landing), REST, and `POST /mcp`. Preferred URL in `
 Jobs live at `/workspace/shipcheck/queue/{job_id}.json`. Reports and screenshots at `/workspace/shipcheck/reports/`.
 
 ## Example request / response
+
+Charter (preferred): a goal, not a click script. If `stories` is omitted, the explorer synthesizes the walk.
+
+```bash
+curl -sS -X POST https://91526eb1894540.lhr.life/qa_preview \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "url": "https://example.com/",
+    "goal": "Walk booking and check a Sat-Sat week uses the weekly rate",
+    "viewport": "desktop"
+  }'
+```
+
+Or pass explicit stories. If both `stories` and `goal` are set, we run the stories and the judge still uses the goal.
 
 ```bash
 curl -sS -X POST https://91526eb1894540.lhr.life/qa_preview \
@@ -74,7 +88,7 @@ Terminal statuses: `pass` (heuristics green **and** stories executed `click:`/`f
 
 Optional headers for later billing: `Authorization: Bearer <key>` or `X-Api-Key`. v0 accepts missing keys and does not debit.
 
-Story steps (required for a real pass; otherwise treated as notes): `click:css=.buy`, `click:text=Sign in`, `fill:#email|user@example.com`, `wait:1000`, `see:Order total`. `click:` prefers a **visible** match (hidden mobile-nav CTAs lose to the hero/sticky button). Analytics/gtag/collect 429s are recorded but do not fail the job.
+Pass a `goal`/`charter` (max 500 chars) **or** story steps. Charter explorer v0: visible Book/Buy/Checkout/Cart/Setup/Rent/Continue/Add, one click, no payment fill, no Send/Pay/Place order. Story steps: `click:css=.buy`, `click:text=Sign in`, `fill:#email|user@example.com`, `wait:1000`, `see:Order total`. `click:` prefers a **visible** match (hidden mobile-nav CTAs lose to the hero/sticky button). Analytics/gtag/collect 429s are recorded but do not fail the job.
 
 Homepage expect-only (`steps: ["open homepage"], expect: "Welcome"`) is **not a pass** — the report will say `smoke only — no interaction`.
 

@@ -200,3 +200,66 @@ def test_rate_limit_public_ip() -> None:
             os.environ.pop("SHIPCHECK_PREVIEW_LIMIT_PER_IP", None)
         else:
             os.environ["SHIPCHECK_PREVIEW_LIMIT_PER_IP"] = old
+
+
+GOAL = "Walk booking and check a Sat-Sat week uses the weekly rate"
+
+
+def test_qa_preview_accepts_goal_without_stories() -> None:
+    from shipcheck.store import load_job
+
+    r = client.post(
+        "/qa_preview",
+        json={"url": "https://example.com/", "goal": GOAL, "viewport": "desktop"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "queued"
+    assert body["price_usd"] == 6
+    job = load_job(body["job_id"])
+    assert job is not None
+    assert job.get("goal") == GOAL
+    assert job["stories"][0]["id"] == "charter"
+    assert job["stories"][0]["steps"] == ["explore"]
+
+
+def test_qa_preview_charter_alias() -> None:
+    from shipcheck.store import load_job
+
+    r = client.post(
+        "/qa_preview",
+        json={"url": "https://example.com/", "charter": GOAL},
+    )
+    assert r.status_code == 200, r.text
+    job = load_job(r.json()["job_id"])
+    assert job is not None
+    assert job.get("goal") == GOAL
+
+
+def test_qa_preview_goal_and_stories_keeps_stories() -> None:
+    from shipcheck.store import load_job
+
+    r = client.post(
+        "/qa_preview",
+        json={
+            "url": "https://example.com/",
+            "goal": GOAL,
+            "stories": [
+                {"id": "book", "steps": ["click:text=Book now"], "expect": "Cart"}
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+    job = load_job(r.json()["job_id"])
+    assert job is not None
+    assert job.get("goal") == GOAL
+    assert [s["id"] for s in job["stories"]] == ["book"]
+    assert job["stories"][0]["steps"] == ["click:text=Book now"]
+
+
+def test_qa_preview_goal_too_long() -> None:
+    r = client.post(
+        "/qa_preview",
+        json={"url": "https://example.com/", "goal": "x" * 501},
+    )
+    assert r.status_code == 422

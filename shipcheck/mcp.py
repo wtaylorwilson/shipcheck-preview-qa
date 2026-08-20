@@ -53,7 +53,8 @@ TOOLS: list[dict[str, Any]] = [
         "name": "qa_preview",
         "description": (
             "Queue an independent Playwright QA run against a public https preview URL. "
-            "Stories should use click:/fill:/see: — homepage expect-only is smoke "
+            "Pass click:/fill:/see: stories, or a goal/charter (human-equivalent QA) "
+            "and we synthesize an explorer walk. Homepage expect-only is smoke "
             "(needs_review, not pass). Returns a job_id. Poll qa_status; fetch "
             "qa_get_report when status is pass or needs_review. Report includes "
             "human_note and findings[]. https only; localhost and private IPs are rejected."
@@ -67,9 +68,23 @@ TOOLS: list[dict[str, Any]] = [
                     "maxLength": 2048,
                     "description": "Public https preview URL",
                 },
+                "goal": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": (
+                        "Charter for human-equivalent QA, e.g. "
+                        "'Walk booking and check a Sat-Sat week uses the weekly rate'. "
+                        "If stories are omitted, a built-in explorer synthesizes them."
+                    ),
+                },
+                "charter": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": "Alias for goal",
+                },
                 "stories": {
                     "type": "array",
-                    "minItems": 1,
+                    "minItems": 0,
                     "maxItems": 8,
                     "items": {
                         "type": "object",
@@ -112,7 +127,7 @@ TOOLS: list[dict[str, Any]] = [
                     "description": "Accepted and SSRF-checked; not fired in v0",
                 },
             },
-            "required": ["url", "stories"],
+            "required": ["url"],
             "additionalProperties": False,
         },
         "annotations": {
@@ -296,7 +311,8 @@ def _handle_method(method: str, params: Any, api_key: str | None, client_ip: str
             "serverInfo": {"name": "shipcheck", "version": __version__},
             "instructions": (
                 "Independent preview-URL QA. Call qa_preview with a public https URL and "
-                "click:/fill:/see: stories (homepage expect-only is smoke, not a pass), "
+                "either click:/fill:/see: stories or a goal/charter (explorer synthesizes "
+                "the walk). Homepage expect-only is smoke, not a pass. "
                 "poll qa_status, then qa_get_report for human_note + findings[]. "
                 "On needs_review, qa_note can attach a later human/agent verdict."
             ),

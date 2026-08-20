@@ -20,7 +20,7 @@
 </head>
 <body>
 <h1>ShipCheck v0</h1>
-<p>Independent preview-URL QA for coding agents. You POST a <strong>public https</strong> preview URL plus acceptance stories. We run Playwright heuristics, screenshot each story, and return a pass/fail evidence pack. Failures stay <code>needs_review</code> until a human (or this agent looking at the page) adds a short note.</p>
+<p>Independent preview-URL QA for coding agents. You POST a <strong>public https</strong> preview URL plus acceptance stories <em>or</em> a <code>goal</code>/<code>charter</code>. We walk the product in Playwright, screenshot, judge against a fixed rubric, and return a pass/fail evidence pack. Failures stay <code>needs_review</code> until a human (or this agent looking at the page) adds a short note.</p>
 <p class="muted">Public preview. No billing yet. Credits (Polar) later. Localhost and private URLs are rejected.</p>
 
 <h2>Price intent (not charged)</h2>
@@ -34,7 +34,7 @@
 <h2>Three tool calls</h2>
 <table>
   <tr><th>Tool</th><th>REST</th><th>What</th></tr>
-  <tr><td><code>qa_preview</code></td><td><code>POST /qa_preview</code></td><td>Queue a run. Body: <code>{url, stories[{id, steps[], expect}], viewport}</code>. Returns <code>job_id</code>.</td></tr>
+  <tr><td><code>qa_preview</code></td><td><code>POST /qa_preview</code></td><td>Queue a run. Body: <code>{url, stories?[{id, steps[], expect}], goal?, viewport}</code>. <code>goal</code>/<code>charter</code> synthesizes an explorer walk when stories are omitted. Returns <code>job_id</code>.</td></tr>
   <tr><td><code>qa_status</code></td><td><code>GET /qa_status/{job_id}</code></td><td>queued / running / pass / needs_review / error</td></tr>
   <tr><td><code>qa_get_report</code></td><td><code>GET /qa_get_report/{job_id}</code></td><td>Evidence pack: heuristics, screenshots, optional <code>human_note</code></td></tr>
 </table>

@@ -7,6 +7,13 @@ import time
 from typing import Any
 
 from shipcheck.billing import debit
+from shipcheck.explorer import (
+    collect_page_observations,
+    explore_goal_from_step,
+    is_explore_step,
+    run_explorer,
+)
+from shipcheck.judge import apply_rubric
 from shipcheck.models import expect_list
 from shipcheck.paths import ensure_dirs
 from shipcheck.ssrf import JOB_CAP_S, NAV_TIMEOUT_S, UnsafeUrl, assert_url_allowed
@@ -241,6 +248,7 @@ def compose_human_note(
     results: list[dict[str, Any]],
     smoke: bool,
     findings: list[dict[str, Any]],
+    goal: str | None = None,
 ) -> str:
     """Short findings brief — not 'looks fine'."""
     acted: list[str] = []
@@ -257,6 +265,8 @@ def compose_human_note(
             f"{r.get('id')}[{r.get('viewport')}]: " + "; ".join(str(b) for b in bits[:4])
         )
     parts = [f"Verdict: {status}."]
+    if goal:
+        parts.append(f"Charter: {goal[:240]}.")
     parts.append("Clicked: " + ("; ".join(acted[:16]) if acted else "(none)") + ".")
     parts.append("Failed: " + (" | ".join(failed[:8]) if failed else "(none)") + ".")
     if smoke:
@@ -278,14 +288,16 @@ def finalize_job_report(
     *,
     results: list[dict[str, Any]],
     stories: list[dict[str, Any]],
+    goal: str | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     """Decide job status, write the findings brief, attach report JSON."""
     any_fail = any(r.get("status") == "fail" for r in results)
     findings = build_findings(results)
     smoke = is_smoke_only(stories, results)
+    findings.extend(apply_rubric(results=results, stories=stories, goal=goal, smoke=smoke))
     status = "needs_review" if (any_fail or smoke) else "pass"
     note = compose_human_note(
-        status=status, results=results, smoke=smoke, findings=findings
+        status=status, results=results, smoke=smoke, findings=findings, goal=goal
     )
     report = {
         "stories": results,
@@ -297,6 +309,9 @@ def finalize_job_report(
         },
         "findings": findings,
     }
+    if goal:
+        report["goal"] = goal
+        report["summary"]["goal"] = goal
     return status, note, report
 
 
@@ -373,6 +388,7 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
                                     vp_name=vp_name,
                                     shot_root=shot_root,
                                     deadline=deadline,
+                                    goal=job.get("goal"),
                                 )
                             )
                     finally:
@@ -404,7 +420,9 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
     job["billed"] = debit_result.billed
     job["billing_reason"] = debit_result.reason
     job["price_usd"] = debit_result.price_usd
-    status, note, report = finalize_job_report(results=results, stories=stories)
+    status, note, report = finalize_job_report(
+        results=results, stories=stories, goal=job.get("goal")
+    )
     job["status"] = status
     job["human_note"] = note
     job["report"] = report
@@ -423,6 +441,7 @@ def _run_one_story(
     vp_name: str,
     shot_root,
     deadline: float,
+    goal: str | None = None,
 ) -> dict[str, Any]:
     story_id = story["id"]
     page = context.new_page()
@@ -492,6 +511,7 @@ def _run_one_story(
 
     step_errors: list[str] = []
     actions: list[str] = []
+    explore_obs: list[dict[str, Any]] = []
     body_text = ""
     empty_body = True
     screenshot_rel = None
@@ -501,11 +521,30 @@ def _run_one_story(
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=nav_timeout)
         for step in story.get("steps") or []:
+            if is_explore_step(step):
+                step_goal = explore_goal_from_step(step, goal)
+                obs, action, err = run_explorer(
+                    page,
+                    goal=step_goal,
+                    job_id=job_id,
+                    story_id=story_id,
+                    vp_name=vp_name,
+                    shot_root=shot_root,
+                )
+                if obs:
+                    explore_obs.append(obs)
+                if action:
+                    actions.append(action)
+                if err:
+                    step_errors.append(err)
+                continue
             action, err = _run_structured_step(page, step)
             if action:
                 actions.append(action)
             if err:
                 step_errors.append(err)
+        if goal and not explore_obs:
+            explore_obs.append(collect_page_observations(page, goal))
         try:
             body_text = page.inner_text("body") or ""
         except Exception:
@@ -536,7 +575,7 @@ def _run_one_story(
         if needle.lower() not in body_text.lower():
             expect_missing.append(needle)
 
-    return _story_result(
+    result = _story_result(
         story_id=story_id,
         viewport=vp_name,
         http_status=http_status,
@@ -551,3 +590,6 @@ def _run_one_story(
         ssrf=ssrf_hits,
         actions=actions,
     )
+    if explore_obs:
+        result["explore"] = explore_obs[0] if len(explore_obs) == 1 else explore_obs
+    return result

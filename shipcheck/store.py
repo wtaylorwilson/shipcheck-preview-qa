@@ -80,6 +80,7 @@ def create_job(payload: dict[str, Any]) -> dict[str, Any]:
         "url": payload["url"],
         "stories": payload["stories"],
         "viewport": payload["viewport"],
+        "goal": payload.get("goal"),
         "auth_hint": payload.get("auth_hint"),
         "webhook_url": payload.get("webhook_url"),
         "price_usd": payload["price_usd"],

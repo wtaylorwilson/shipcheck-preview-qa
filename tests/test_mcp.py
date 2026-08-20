@@ -60,7 +60,10 @@ def test_mcp_tools_list() -> None:
     assert {"qa_preview", "qa_status", "qa_get_report"} <= names
     preview = next(t for t in tools if t["name"] == "qa_preview")
     assert "url" in preview["inputSchema"]["properties"]
-    assert "stories" in preview["inputSchema"]["required"]
+    assert "goal" in preview["inputSchema"]["properties"]
+    assert "charter" in preview["inputSchema"]["properties"]
+    assert "url" in preview["inputSchema"]["required"]
+    assert "stories" not in preview["inputSchema"]["required"]
 
 
 def test_mcp_qa_preview_happy_path() -> None:
@@ -195,3 +198,29 @@ def test_mcp_qa_note_tool() -> None:
     assert payload["status"] == "needs_review"
     assert payload["human_verdict"] == "fail"
     assert payload["human_note"] == "Confirmed broken checkout."
+
+
+def test_mcp_qa_preview_goal_without_stories() -> None:
+    from shipcheck.store import load_job
+
+    r = _rpc(
+        "tools/call",
+        {
+            "name": "qa_preview",
+            "arguments": {
+                "url": "https://example.com/",
+                "goal": "Walk booking and check a Sat-Sat week uses the weekly rate",
+                "viewport": "desktop",
+            },
+        },
+        id_=11,
+    )
+    assert r.status_code == 200, r.text
+    result = r.json()["result"]
+    assert result["isError"] is False
+    payload = json.loads(result["content"][0]["text"])
+    assert payload["status"] == "queued"
+    job = load_job(payload["job_id"])
+    assert job is not None
+    assert job["stories"][0]["id"] == "charter"
+    assert job.get("goal")

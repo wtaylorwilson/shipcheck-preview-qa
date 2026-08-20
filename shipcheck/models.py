@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 Viewport = Literal["desktop", "mobile", "both"]
 JobStatus = Literal["queued", "running", "pass", "needs_review", "error"]
@@ -29,7 +29,9 @@ class Story(BaseModel):
 
 class QaPreviewRequest(BaseModel):
     url: str = Field(min_length=8, max_length=2048)
-    stories: list[Story] = Field(min_length=1, max_length=8)
+    stories: list[Story] = Field(default_factory=list, max_length=8)
+    goal: str | None = Field(default=None, max_length=500)
+    charter: str | None = Field(default=None, max_length=500)
     viewport: Viewport = "desktop"
     auth_hint: str | None = Field(default=None, max_length=200)
     webhook_url: str | None = None
@@ -38,6 +40,22 @@ class QaPreviewRequest(BaseModel):
     @classmethod
     def _strip_url(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("goal", "charter")
+    @classmethod
+    def _strip_goal(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def _stories_or_goal(self) -> "QaPreviewRequest":
+        chosen = self.goal or self.charter
+        self.goal = chosen
+        if not self.stories and not chosen:
+            raise ValueError("provide stories or a goal/charter")
+        return self
 
 
 class QaPreviewResponse(BaseModel):
@@ -80,6 +98,7 @@ def public_job(job: dict[str, Any], *, include_report: bool = False) -> dict[str
         "status": job["status"],
         "url": job.get("url"),
         "viewport": job.get("viewport"),
+        "goal": job.get("goal"),
         "price_usd": job.get("price_usd"),
         "billed": job.get("billed", False),
         "created_at": job.get("created_at"),

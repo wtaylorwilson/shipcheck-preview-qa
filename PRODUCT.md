@@ -1,6 +1,6 @@
 # ShipCheck
 
-**One-liner:** An agent posts a public preview URL plus `click:`/`fill:`/`see:` stories; we walk the product, write a findings brief, and return a pass/fail evidence pack the coding agent cannot fake by grading itself.
+**One-liner:** An agent posts a public preview URL plus a `goal`/`charter` (or `click:`/`fill:`/`see:` stories); we walk the product, write a findings brief, and return a pass/fail evidence pack the coding agent cannot fake by grading itself.
 
 ## Who this is for
 
@@ -12,7 +12,7 @@ Same tools on REST and at `POST /mcp`. Public: `https://realtor-all-enclosed-alt
 
 | Tool | HTTP | What it does |
 |---|---|---|
-| `qa_preview` | `POST /qa_preview` | Queue a run: `{url, stories[{id, steps[], expect}], viewport, auth_hint?}` |
+| `qa_preview` | `POST /qa_preview` | Queue a run: `{url, stories?[{id, steps[], expect}], goal?/charter?, viewport, auth_hint?}` |
 | `qa_status` | `GET /qa_status/{job_id}` | queued / running / pass / needs_review / error |
 | `qa_get_report` | `GET /qa_get_report/{job_id}` | Evidence pack: heuristics, screenshots, `human_note`, `findings[]` |
 | `qa_note` | `POST /qa_note/{job_id}` | Close `needs_review`: `{human_note, verdict: pass\|fail}` |
@@ -22,7 +22,11 @@ Same tools on REST and at `POST /mcp`. Public: `https://realtor-all-enclosed-alt
 
 ## What a useful run looks like
 
-Homepage `expect`-only ("text exists → pass") is **not a pass**. A useful run requires `click:` / `fill:` / `see:` stories that exercise the product (book, cart, checkout, dates, guest fields). If heuristics are green but stories never left the homepage and never executed a `click:`/`fill:` step, status is `needs_review` with `human_note` containing `smoke only — no interaction`.
+Human-equivalent QA is a **charter**, not a list of `click:` steps. Example goal: `Walk booking and check a Sat-Sat week uses the weekly rate`. If `stories` is omitted and `goal`/`charter` is set, a built-in explorer (no LLM) opens the page, collects visible Book/Buy/Checkout/Cart/Setup/Rent/Continue/Add CTAs, clicks the most relevant one once, and records prices, date inputs, and validation. It never fills payment fields and never submits Send / Submit request / Pay / Place order.
+
+A judge then writes `human_note` + `report.findings[]` from a fixed rubric: money (day/week, delivery fees, off-by-one dates), dead CTA (click did nothing / same URL / hidden-only), copy vs behavior when the goal mentions dates/pay/cart, and smoke-only if nothing was clicked. Severity is high/med/low/info. The judge does not invent bugs that were not observed.
+
+Homepage `expect`-only ("text exists → pass") is **not a pass**. If you pass scripted stories instead of a goal, they still need `click:` / `fill:` / `see:` that exercise the product. If heuristics are green but we never executed a `click:`/`fill:` step, status is `needs_review` with `human_note` containing `smoke only — no interaction`.
 
 Every finished heuristic job writes:
 

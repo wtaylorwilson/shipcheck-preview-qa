@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from shipcheck.billing import check_api_key, price_usd
+from shipcheck.explorer import synthesize_stories
 from shipcheck.models import QaNoteRequest, QaPreviewRequest, public_job
 from shipcheck.ratelimit import consume_preview_slot
 from shipcheck.ssrf import UnsafeUrl, assert_url_allowed
@@ -42,13 +43,18 @@ def enqueue_preview(
     if not ok:
         raise ServiceError(429, reason)
 
-    n = len(body.stories)
+    stories = list(body.stories)
+    goal = body.goal
+    if not stories and goal:
+        stories = synthesize_stories(goal)
+    n = len(stories)
     price = price_usd(body.viewport, n)
     job = create_job(
         {
             "url": body.url,
-            "stories": [s.model_dump() for s in body.stories],
+            "stories": [s.model_dump() for s in stories],
             "viewport": body.viewport,
+            "goal": goal,
             "auth_hint": body.auth_hint,
             "webhook_url": body.webhook_url,
             "price_usd": price,
