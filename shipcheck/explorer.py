@@ -1,14 +1,16 @@
 """Deterministic charter explorer (v0). No LLM, no extra keys.
 
 Given a public URL + goal text, collect visible primary CTAs, click the
-most relevant one once (visible-first), screenshot before/after, and
-record prices / date inputs / validation. Never fill payment fields.
-Never submit Send / Submit request / Pay / Place order.
+most relevant one (visible-first), then a cart/setup/review control when
+the goal mentions dates/week/cart. Fill a Sat-Sat ISO pair when the goal
+asks for a week. Record duration text and totals. Never fill payment
+fields. Never submit Send / Submit request / Pay / Place order.
 """
 
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -49,6 +51,28 @@ PRICE_RE = re.compile(
 )
 
 NIGHTS_RE = re.compile(r"\b(\d+)\s*(nights?|days?)\b", re.IGNORECASE)
+
+FOLLOWUP_WORDS = ("cart", "setup", "review")
+
+GOAL_FOLLOWUP_RE = re.compile(
+    r"\b(dates?|week(?:ly)?|sat[- ]?sat|cart|nightly|nights?)\b",
+    re.IGNORECASE,
+)
+GOAL_WEEK_RE = re.compile(
+    r"\b(week(?:ly)?|sat[- ]?sat|sat(?:urday)?\s*[-–to]+\s*sat(?:urday)?)\b",
+    re.IGNORECASE,
+)
+CART_TOTAL_RE = re.compile(
+    r"(?:cart\s+)?(?:sub)?total(?:\s+due)?\s*:?\s*\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)"
+    r"|\$\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*(?:total)\b",
+    re.IGNORECASE,
+)
+START_DATE_NAME_RE = re.compile(
+    r"deliver|check[-_ ]?in|start|from|begin|arriv", re.IGNORECASE
+)
+END_DATE_NAME_RE = re.compile(
+    r"pick[-_ ]?up|check[-_ ]?out|end\b|until|depart|return", re.IGNORECASE
+)
 
 CTA_JS = """() => {
   const nodes = Array.from(document.querySelectorAll(
@@ -200,6 +224,105 @@ def extract_nights_mentions(text: str) -> list[int]:
     return out[:12]
 
 
+def extract_duration_text(text: str) -> list[str]:
+    seen: list[str] = []
+    for m in NIGHTS_RE.finditer(text or ""):
+        token = " ".join(m.group(0).split())
+        if token not in seen:
+            seen.append(token)
+    return seen[:12]
+
+
+def extract_totals(text: str) -> list[str]:
+    seen: list[str] = []
+    for m in CART_TOTAL_RE.finditer(text or ""):
+        amt = m.group(1) or m.group(2)
+        if not amt:
+            continue
+        token = f"${amt}"
+        if token not in seen:
+            seen.append(token)
+    return seen[:8]
+
+
+def goal_wants_deeper_walk(goal: str | None) -> bool:
+    """True when the charter needs dates/week/cart, not just the first CTA."""
+    return bool(GOAL_FOLLOWUP_RE.search(goal or ""))
+
+
+def goal_asks_week(goal: str | None) -> bool:
+    return bool(GOAL_WEEK_RE.search(goal or ""))
+
+
+def next_saturday(today: date | None = None) -> date:
+    d = today or date.today()
+    ahead = (5 - d.weekday()) % 7
+    return d + timedelta(days=ahead)
+
+
+def sat_sat_iso(today: date | None = None) -> tuple[str, str]:
+    """Delivery = next Saturday, pickup = Saturday+7, as ISO dates."""
+    start = next_saturday(today)
+    return start.isoformat(), (start + timedelta(days=7)).isoformat()
+
+
+def is_followup_cta(text: str) -> bool:
+    tl = (text or "").lower()
+    return any(re.search(rf"\b{re.escape(w)}\b", tl) for w in FOLLOWUP_WORDS)
+
+
+def choose_followup_cta(
+    ctas: list[dict[str, Any]],
+    *,
+    already_clicked: str | None,
+) -> dict[str, Any] | None:
+    """Visible cart/setup/review after the first CTA. Never Pay/Send/Place order."""
+    allowed = [
+        c
+        for c in ctas
+        if c.get("visible")
+        and is_followup_cta(str(c.get("text") or ""))
+        and not is_forbidden_submit(str(c.get("text") or ""))
+        and str(c.get("text") or "") != (already_clicked or "")
+    ]
+    if not allowed:
+        return None
+
+    def _rank(c: dict[str, Any]) -> tuple[int, str]:
+        tl = str(c.get("text") or "").lower()
+        order = 9
+        for i, w in enumerate(FOLLOWUP_WORDS):
+            if re.search(rf"\b{re.escape(w)}\b", tl):
+                order = i
+                break
+        return (order, tl)
+
+    allowed.sort(key=_rank)
+    return allowed[0]
+
+
+def assign_sat_sat_values(
+    date_inputs: list[dict[str, Any]],
+    start: str,
+    end: str,
+) -> list[tuple[dict[str, Any], str]]:
+    visible = [
+        d
+        for d in date_inputs
+        if d.get("visible") and not is_payment_field(str(d.get("name") or ""))
+    ]
+    if not visible:
+        return []
+    starts = [d for d in visible if START_DATE_NAME_RE.search(str(d.get("name") or ""))]
+    ends = [d for d in visible if END_DATE_NAME_RE.search(str(d.get("name") or ""))]
+    if starts and ends:
+        return [(starts[0], start), (ends[0], end)]
+    out: list[tuple[dict[str, Any], str]] = [(visible[0], start)]
+    if len(visible) >= 2:
+        out.append((visible[1], end))
+    return out
+
+
 def synthesize_stories(goal: str) -> list[Story]:
     """One charter story. The runner's explorer step does the walking."""
     _ = (goal or "").strip()
@@ -326,21 +449,93 @@ def collect_page_observations(page, goal: str | None = None) -> dict[str, Any]:
         "date_inputs": dates,
         "validation": validation,
         "nights_mentions": extract_nights_mentions(body),
+        "duration_text": extract_duration_text(body),
+        "totals": extract_totals(body),
+        "dates_filled": [],
         "hidden_only_target": find_hidden_only_target(ctas, goal),
         "screenshot_before": None,
         "screenshot_after": None,
     }
 
 
-def _click_visible_text(page, text: str, timeout: int = 5000) -> None:
-    loc = page.get_by_text(text, exact=False)
+def _prefer_visible(loc):
     filt = getattr(loc, "filter", None)
     if callable(filt):
         try:
-            loc = loc.filter(visible=True)
+            return loc.filter(visible=True)
         except TypeError:
-            pass
-    loc.first.click(timeout=timeout)
+            return loc
+    return loc
+
+
+def _click_visible_text(page, text: str, timeout: int = 5000) -> None:
+    loc = page.get_by_text(text, exact=False)
+    _prefer_visible(loc).first.click(timeout=timeout)
+
+
+def _settle(page, extra_ms: int = 300) -> None:
+    try:
+        waiter = getattr(page, "wait_for_load_state", None)
+        if callable(waiter):
+            waiter("domcontentloaded", timeout=4000)
+    except Exception:
+        pass
+    try:
+        sleeper = getattr(page, "wait_for_timeout", None)
+        if callable(sleeper):
+            sleeper(extra_ms)
+    except Exception:
+        pass
+
+
+def _page_url(page, fallback: str = "") -> str:
+    try:
+        return str(getattr(page, "url", "") or "") or fallback
+    except Exception:
+        return fallback
+
+
+def _merge_unique(base: list, extra: list) -> list:
+    out = list(base or [])
+    for item in extra or []:
+        if item not in out:
+            out.append(item)
+    return out
+
+
+def _css_quote(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _fill_date_field(page, item: dict[str, Any], value: str) -> None:
+    name = str(item.get("name") or "")
+    itype = str(item.get("type") or "")
+    fill_val = value
+    if itype == "datetime-local" and "T" not in fill_val:
+        fill_val = fill_val + "T10:00"
+    loc = None
+    if name:
+        esc = _css_quote(name)
+        loc = page.locator(f'input[name="{esc}"], input[id="{esc}"]')
+    elif itype:
+        loc = page.locator(f'input[type="{itype}"]')
+    else:
+        loc = page.locator('input[type="date"], input[type="datetime-local"]')
+    _prefer_visible(loc).first.fill(fill_val, timeout=4000)
+
+
+def _apply_after_snapshot(obs: dict[str, Any], after: dict[str, Any]) -> None:
+    obs["prices"] = _merge_unique(obs.get("prices") or [], after.get("prices") or [])
+    obs["date_inputs"] = after.get("date_inputs") or []
+    obs["validation"] = after.get("validation") or []
+    obs["nights_mentions"] = _merge_unique(
+        obs.get("nights_mentions") or [], after.get("nights_mentions") or []
+    )
+    obs["duration_text"] = _merge_unique(
+        obs.get("duration_text") or [], after.get("duration_text") or []
+    )
+    obs["totals"] = _merge_unique(obs.get("totals") or [], after.get("totals") or [])
+    obs["ctas"] = after.get("ctas") or obs.get("ctas") or []
 
 
 def run_explorer(
@@ -352,12 +547,8 @@ def run_explorer(
     vp_name: str,
     shot_root,
 ) -> tuple[dict[str, Any], str | None, str | None]:
-    """Walk once. Returns (observations, action, error)."""
-    url_before = ""
-    try:
-        url_before = str(getattr(page, "url", "") or "")
-    except Exception:
-        url_before = ""
+    """Walk the charter. Returns (observations, action, error)."""
+    url_before = _page_url(page)
     body_before = _body(page)
     shot_before = None
     try:
@@ -376,6 +567,7 @@ def run_explorer(
         for c in ctas
         if c.get("visible") and is_forbidden_submit(c.get("text") or "")
     ]
+    action_parts: list[str] = []
 
     chosen = choose_cta(ctas, goal or "")
     if chosen is None:
@@ -395,40 +587,72 @@ def run_explorer(
 
     try:
         _click_visible_text(page, chosen["text"], timeout=5000)
-        action = f"clicked {chosen['text']}"
+        action_parts.append(f"clicked {chosen['text']}")
         obs["clicked"] = {"text": chosen["text"], "href": chosen.get("href") or ""}
     except Exception as exc:  # noqa: BLE001
         obs["clicked"] = None
         return obs, None, f"step failed (explore click {chosen['text'][:40]}): {exc}"
 
-    try:
-        waiter = getattr(page, "wait_for_load_state", None)
-        if callable(waiter):
-            waiter("domcontentloaded", timeout=4000)
-    except Exception:
-        pass
-    try:
-        sleeper = getattr(page, "wait_for_timeout", None)
-        if callable(sleeper):
-            sleeper(300)
-    except Exception:
-        pass
+    _settle(page)
+    url_after_first = _page_url(page, url_before)
+    body_after_first = _body(page)
+    obs["same_url"] = same_url(url_before, url_after_first)
+    obs["page_changed"] = (not obs["same_url"]) or (
+        body_after_first.strip() != body_before.strip()
+    )
 
-    url_after = ""
-    try:
-        url_after = str(getattr(page, "url", "") or "")
-    except Exception:
-        url_after = url_before
-    body_after = _body(page)
-    after = collect_page_observations(page, goal)
-    obs["url_after"] = url_after
-    obs["same_url"] = same_url(url_before, url_after)
-    obs["page_changed"] = (not obs["same_url"]) or (body_after.strip() != body_before.strip())
-    obs["prices"] = after.get("prices") or obs.get("prices") or []
-    obs["date_inputs"] = after.get("date_inputs") or []
-    obs["validation"] = after.get("validation") or []
-    obs["nights_mentions"] = after.get("nights_mentions") or []
-    obs["ctas"] = after.get("ctas") or obs.get("ctas") or []
+    if goal_wants_deeper_walk(goal):
+        follow_ctas = collect_ctas(page)
+        follow = choose_followup_cta(follow_ctas, already_clicked=chosen["text"])
+        if follow is not None:
+            try:
+                _click_visible_text(page, follow["text"], timeout=5000)
+                action_parts.append(f"clicked {follow['text']}")
+                obs["clicked_followup"] = {
+                    "text": follow["text"],
+                    "href": follow.get("href") or "",
+                }
+                _settle(page)
+            except Exception:
+                obs["clicked_followup"] = None
+        extra_refused = [
+            {"text": c["text"], "reason": "submit/pay"}
+            for c in follow_ctas
+            if c.get("visible") and is_forbidden_submit(c.get("text") or "")
+        ]
+        obs["refused"] = _merge_unique(obs.get("refused") or [], extra_refused)
+
+    after_walk = collect_page_observations(page, goal)
+    _apply_after_snapshot(obs, after_walk)
+
+    dates_filled: list[dict[str, str]] = []
+    if goal_asks_week(goal):
+        start, end = sat_sat_iso()
+        pairs = assign_sat_sat_values(obs.get("date_inputs") or [], start, end)
+        for item, value in pairs:
+            try:
+                _fill_date_field(page, item, value)
+                name = str(item.get("name") or item.get("type") or "date")
+                dates_filled.append({"name": name, "value": value})
+                action_parts.append(f"filled {name}={value}")
+            except Exception:
+                continue
+        if dates_filled:
+            _settle(page, extra_ms=400)
+            after_fill = collect_page_observations(page, goal)
+            _apply_after_snapshot(obs, after_fill)
+
+    obs["dates_filled"] = dates_filled
+    obs["url_after"] = _page_url(page, url_after_first)
+    final_ctas = collect_ctas(page)
+    obs["refused"] = _merge_unique(
+        obs.get("refused") or [],
+        [
+            {"text": c["text"], "reason": "submit/pay"}
+            for c in final_ctas
+            if c.get("visible") and is_forbidden_submit(c.get("text") or "")
+        ],
+    )
 
     try:
         name = f"{story_id}-{vp_name}-after.png"
@@ -437,4 +661,4 @@ def run_explorer(
     except Exception:
         obs["screenshot_after"] = None
 
-    return obs, action, None
+    return obs, "; ".join(action_parts) if action_parts else None, None

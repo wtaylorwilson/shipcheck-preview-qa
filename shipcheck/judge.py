@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%Y/%m/%d", "%d/%m/%Y")
 
 GOAL_DATE_RE = re.compile(
-    r"\b(date|dates|sat|saturday|sun|sunday|week|weekly|night|nights|"
+    r"\b(date|dates|sat|saturday|sun|sunday|week|weekly|night|nights|nightly|"
     r"check[- ]?in|check[- ]?out)\b",
     re.IGNORECASE,
 )
@@ -25,6 +25,11 @@ GOAL_PAY_RE = re.compile(
     re.IGNORECASE,
 )
 GOAL_CART_RE = re.compile(r"\bcart\b", re.IGNORECASE)
+CHARTER_EVIDENCE_RE = re.compile(
+    r"\b(dates?|week(?:ly)?|sat[- ]?sat|saturday|nightly|nights?|"
+    r"delivery|price|total)\b",
+    re.IGNORECASE,
+)
 
 RATE_RE = re.compile(
     r"\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*/\s*(day|night|daily|week|wk|weekly)",
@@ -90,6 +95,21 @@ def parse_date_value(raw: str) -> date | None:
     return None
 
 
+def _parse_money_amount(raw: str) -> float | None:
+    m = re.search(r"(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)", raw or "")
+    if not m:
+        return None
+    try:
+        return float(m.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def goal_needs_charter_evidence(goal: str | None) -> bool:
+    """True when the charter mentions dates/week/price-class claims."""
+    return bool(CHARTER_EVIDENCE_RE.search(goal or ""))
+
+
 def goal_topics(goal: str | None) -> set[str]:
     gl = goal or ""
     topics: set[str] = set()
@@ -138,11 +158,18 @@ def _money_findings(obs_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for p in obs.get("prices") or []:
             if p not in prices:
                 prices.append(p)
-        for d in obs.get("date_inputs") or []:
+        for d in list(obs.get("date_inputs") or []) + list(obs.get("dates_filled") or []):
             val = str(d.get("value") or "").strip()
             if val and val not in date_values:
                 date_values.append(val)
         for n in obs.get("nights_mentions") or []:
+            if n not in nights:
+                nights.append(n)
+        for token in obs.get("duration_text") or []:
+            m = re.search(r"(\d+)", str(token))
+            if not m:
+                continue
+            n = int(m.group(1))
             if n not in nights:
                 nights.append(n)
         blob = " ".join(str(x) for x in (obs.get("prices") or []) + (obs.get("validation") or []))
@@ -154,40 +181,15 @@ def _money_findings(obs_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
             bodies_delivery_fee = True
 
     daily, weekly = parse_daily_weekly(prices)
-    flagged_ratio = False
-    for d in daily:
-        if d <= 0:
-            continue
-        for w in weekly:
-            ratio = w / d
-            # A week of stay is 5–7 billed days. 8+ is a classic off-by-one.
-            if ratio >= 7.5:
-                findings.append(
-                    _finding(
-                        "high" if ratio >= 7.8 else "med",
-                        "money: day/week mismatch",
-                        f"observed {d:g}/day and {w:g}/week (ratio {ratio:.2f})",
-                    )
-                )
-                flagged_ratio = True
-                break
-            if 0 < ratio < 4.5:
-                findings.append(
-                    _finding(
-                        "med",
-                        "money: day/week mismatch",
-                        f"observed {d:g}/day and {w:g}/week (ratio {ratio:.2f})",
-                    )
-                )
-                flagged_ratio = True
-                break
-        if flagged_ratio:
-            break
+    # A normal ~3x day:week list price is not a money bug by itself.
 
     parsed_dates = [parse_date_value(v) for v in date_values]
     parsed_dates = [d for d in parsed_dates if d is not None]
+    duration_nights = None
+    if len(parsed_dates) >= 2:
+        duration_nights = abs((parsed_dates[1] - parsed_dates[0]).days)
     if len(parsed_dates) >= 2 and nights:
-        computed = abs((parsed_dates[1] - parsed_dates[0]).days)
+        computed = duration_nights if duration_nights is not None else 0
         for shown in nights:
             if shown != computed and abs(shown - computed) == 1:
                 findings.append(
@@ -198,6 +200,41 @@ def _money_findings(obs_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     )
                 )
                 break
+
+    totals_amt: list[float] = []
+    for obs in obs_list:
+        for t in obs.get("totals") or []:
+            v = _parse_money_amount(str(t))
+            if v is not None and v not in totals_amt:
+                totals_amt.append(v)
+
+    if (
+        duration_nights is not None
+        and duration_nights >= 7
+        and weekly
+        and totals_amt
+    ):
+        weeks = duration_nights / 7.0
+        weekly_applied = False
+        for w in weekly:
+            if w <= 0:
+                continue
+            expected_w = w * weeks
+            for t in totals_amt:
+                if expected_w > 0 and abs(t - expected_w) / expected_w <= 0.2:
+                    weekly_applied = True
+                    break
+            if weekly_applied:
+                break
+        if not weekly_applied:
+            findings.append(
+                _finding(
+                    "high",
+                    "money: weekly rate not applied",
+                    f"duration {duration_nights} nights with weekly {weekly[0]:g} "
+                    f"visible but cart total {totals_amt[0]:g} does not use it",
+                )
+            )
 
     if bodies_free_delivery and bodies_delivery_fee:
         findings.append(
@@ -286,6 +323,58 @@ def _copy_vs_behavior(goal: str | None, obs_list: list[dict[str, Any]]) -> list[
     return findings
 
 
+def _observed_dates_used(obs_list: list[dict[str, Any]]) -> bool:
+    for obs in obs_list:
+        if obs.get("dates_filled"):
+            return True
+        for d in obs.get("date_inputs") or []:
+            if str(d.get("value") or "").strip():
+                return True
+    return False
+
+
+def _observed_duration(obs_list: list[dict[str, Any]]) -> bool:
+    for obs in obs_list:
+        if obs.get("nights_mentions") or obs.get("duration_text"):
+            return True
+    return False
+
+
+def _observed_cart_total(obs_list: list[dict[str, Any]]) -> bool:
+    for obs in obs_list:
+        if obs.get("totals"):
+            return True
+    return False
+
+
+def _charter_incomplete(
+    goal: str | None, obs_list: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Do not pass a date/week/price charter the explorer never actually checked."""
+    if not goal_needs_charter_evidence(goal):
+        return []
+    dates_used = _observed_dates_used(obs_list)
+    duration = _observed_duration(obs_list)
+    total = _observed_cart_total(obs_list)
+    if dates_used or duration or total:
+        return []
+    missing: list[str] = []
+    if not dates_used:
+        missing.append("date inputs were not used")
+    if not duration:
+        missing.append("no duration string was observed")
+    if not total:
+        missing.append("no cart total was observed")
+    return [
+        _finding(
+            "high",
+            "charter incomplete",
+            "goal asked to check dates/week/price but the explorer never finished "
+            "the walk: " + "; ".join(missing),
+        )
+    ]
+
+
 def apply_rubric(
     *,
     results: list[dict[str, Any]],
@@ -309,4 +398,5 @@ def apply_rubric(
     extras.extend(_dead_cta_findings(obs_list))
     extras.extend(_money_findings(obs_list))
     extras.extend(_copy_vs_behavior(goal, obs_list))
+    extras.extend(_charter_incomplete(goal, obs_list))
     return _dedupe(extras)

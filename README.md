@@ -84,11 +84,11 @@ curl -sS https://91526eb1894540.lhr.life/qa_status/sc_ab12cd34ef56
 curl -sS https://91526eb1894540.lhr.life/qa_get_report/sc_ab12cd34ef56
 ```
 
-Terminal statuses: `pass` (heuristics green **and** stories executed `click:`/`fill:` — not homepage smoke) or `needs_review` (heuristic failures, **or** smoke-only with no interaction). Every finished job writes `human_note` (verdict, what was clicked, what failed, smoke checks) and `report.findings[]` `{severity, title, detail}` when steps or expects miss. A later human can still overwrite the note via `POST /qa_note/{job_id}` or MCP `qa_note`. `error` is our infrastructure (timeout, crash, unsafe URL) and is not billed.
+Terminal statuses: `pass` (heuristics green **and** stories executed `click:`/`fill:` — not homepage smoke, not an unfinished date/week charter) or `needs_review` (heuristic failures, smoke-only, **or** charter incomplete). Every finished job writes `human_note` (verdict, what was clicked, what failed, smoke checks) and `report.findings[]` `{severity, title, detail}` when steps or expects miss. A later human can still overwrite the note via `POST /qa_note/{job_id}` or MCP `qa_note`. `error` is our infrastructure (timeout, crash, unsafe URL) and is not billed.
 
 Optional headers for later billing: `Authorization: Bearer <key>` or `X-Api-Key`. v0 accepts missing keys and does not debit.
 
-Pass a `goal`/`charter` (max 500 chars) **or** story steps. Charter explorer v0: visible Book/Buy/Checkout/Cart/Setup/Rent/Continue/Add, one click, no payment fill, no Send/Pay/Place order. Story steps: `click:css=.buy`, `click:text=Sign in`, `fill:#email|user@example.com`, `wait:1000`, `see:Order total`. `click:` prefers a **visible** match (hidden mobile-nav CTAs lose to the hero/sticky button). Analytics/gtag/collect 429s are recorded but do not fail the job.
+Pass a `goal`/`charter` (max 500 chars) **or** story steps. Charter explorer v0: visible Book/Buy/Checkout/Cart/Setup/Rent/Continue/Add, then cart/setup/review if the goal needs dates/week/cart; Sat-Sat ISO dates when the goal asks for a week; no payment fill, no Send/Pay/Place order. An unfinished date/week/price charter is `needs_review` (`charter incomplete`), not pass. Story steps: `click:css=.buy`, `click:text=Sign in`, `fill:#email|user@example.com`, `wait:1000`, `see:Order total`. `click:` prefers a **visible** match (hidden mobile-nav CTAs lose to the hero/sticky button). Analytics/gtag/collect 429s are recorded but do not fail the job.
 
 Homepage expect-only (`steps: ["open homepage"], expect: "Welcome"`) is **not a pass** — the report will say `smoke only — no interaction`.
 
