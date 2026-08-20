@@ -66,12 +66,12 @@ def _http(exc: ServiceError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
-@app.get("/", include_in_schema=False)
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 def landing() -> HTMLResponse:
     return HTMLResponse(_LANDING.read_text(encoding="utf-8"))
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health() -> dict[str, Any]:
     return {"ok": True, "service": "shipcheck", "version": __version__, "mcp": True}
 
