@@ -168,8 +168,17 @@ def test_off_by_one_dates() -> None:
             {"name": "checkout", "value": "2026-08-29"},
         ],
     }
-    extras = apply_rubric(results=[result], stories=[], goal=GOAL, smoke=False)
+    stories = [{"id": "charter", "steps": ["explore"], "expect": ""}]
+    extras = apply_rubric(results=[result], stories=stories, goal=GOAL, smoke=False)
     hits = [f for f in extras if "off-by-one" in f["title"]]
     assert hits, extras
     assert hits[0]["severity"] == "high"
     assert "8" in hits[0]["detail"]
+    status, _note, report = finalize_job_report(
+        results=[result], stories=stories, goal=GOAL
+    )
+    assert status != "pass"
+    assert any(
+        f.get("severity") == "high" and "off-by-one" in str(f.get("title") or "")
+        for f in report["findings"]
+    )

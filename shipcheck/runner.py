@@ -295,10 +295,8 @@ def finalize_job_report(
     findings = build_findings(results)
     smoke = is_smoke_only(stories, results)
     findings.extend(apply_rubric(results=results, stories=stories, goal=goal, smoke=smoke))
-    charter_incomplete = any(
-        str(f.get("title") or "") == "charter incomplete" for f in findings
-    )
-    status = "needs_review" if (any_fail or smoke or charter_incomplete) else "pass"
+    high = any(str(f.get("severity") or "").lower() == "high" for f in findings)
+    status = "needs_review" if (any_fail or smoke or high) else "pass"
     note = compose_human_note(
         status=status, results=results, smoke=smoke, findings=findings, goal=goal
     )

@@ -84,7 +84,7 @@ curl -sS https://91526eb1894540.lhr.life/qa_status/sc_ab12cd34ef56
 curl -sS https://91526eb1894540.lhr.life/qa_get_report/sc_ab12cd34ef56
 ```
 
-Terminal statuses: `pass` (heuristics green **and** stories executed `click:`/`fill:` — not homepage smoke, not an unfinished date/week charter) or `needs_review` (heuristic failures, smoke-only, **or** charter incomplete). Every finished job writes `human_note` (verdict, what was clicked, what failed, smoke checks) and `report.findings[]` `{severity, title, detail}` when steps or expects miss. A later human can still overwrite the note via `POST /qa_note/{job_id}` or MCP `qa_note`. `error` is our infrastructure (timeout, crash, unsafe URL) and is not billed.
+Terminal statuses: `pass` (heuristics green **and** stories executed `click:`/`fill:` — not homepage smoke, not a high-severity finding) or `needs_review` (heuristic failures, smoke-only, **or** any high-severity finding). Every finished job writes `human_note` (verdict, what was clicked, what failed, smoke checks) and `report.findings[]` `{severity, title, detail}` when steps or expects miss. A later human can still overwrite the note via `POST /qa_note/{job_id}` or MCP `qa_note`. `error` is our infrastructure (timeout, crash, unsafe URL) and is not billed.
 
 Optional headers for later billing: `Authorization: Bearer <key>` or `X-Api-Key`. v0 accepts missing keys and does not debit.
 
