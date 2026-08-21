@@ -13,21 +13,21 @@ cd /workspace/shipcheck
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/playwright install chromium
-.venv/bin/python -m shipcheck serve --host 0.0.0.0 --port 8787
+.venv/bin/python -m shipcheck serve --host 0.0.0.0 --port 8788
 ```
 
 The venv already exists on this box. Default: the API process also drains the disk queue (inline worker). To split:
 
 ```bash
-SHIPCHECK_INLINE_WORKER=0 .venv/bin/python -m shipcheck serve --port 8787
+SHIPCHECK_INLINE_WORKER=0 .venv/bin/python -m shipcheck serve --port 8788
 .venv/bin/python -m shipcheck worker
 .venv/bin/python -m shipcheck run-job sc_xxxxxxxxxxxx
 ```
 
-Health: `GET http://127.0.0.1:8787/health`
+Health: `GET http://127.0.0.1:8788/health`
 
 Public (localhost.run, this box, Wed Aug 19 2026 ET): **https://91526eb1894540.lhr.life**
-Same process serves `GET /` (landing), REST, and `POST /mcp`. Preferred URL in `PUBLIC_URL.txt` (backup Cloudflare quick tunnel, often blocked on consumer ISPs: `https://realtor-all-enclosed-altered.trycloudflare.com`). localhost.run dies if the ssh reverse tunnel stops; keep `ssh -R 80:localhost:8787 nokey@localhost.run` running.
+Same process serves `GET /` (landing), REST, and `POST /mcp`. Preferred URL in `PUBLIC_URL.txt` (backup Cloudflare quick tunnel, often blocked on consumer ISPs: `https://realtor-all-enclosed-altered.trycloudflare.com`). localhost.run dies if the ssh reverse tunnel stops; keep `ssh -R 80:localhost:8788 nokey@localhost.run` running.
 
 Jobs live at `/workspace/shipcheck/queue/{job_id}.json`. Reports and screenshots at `/workspace/shipcheck/reports/`.
 
@@ -122,7 +122,7 @@ Streamable-HTTP MCP is served at `POST /mcp` (same process as REST). Tools: `qa_
 }
 ```
 
-v0 accepts a missing key and does not debit. Same file lives at `examples/mcp.json`. Server must be running (`python -m shipcheck serve --host 127.0.0.1 --port 8787`). Public URL is a localhost.run ssh reverse tunnel in front of that process (Cloudflare quick tunnel kept as backup).
+v0 accepts a missing key and does not debit. Same file lives at `examples/mcp.json`. Server must be running (`python -m shipcheck serve --host 127.0.0.1 --port 8788`). Public URL is a localhost.run ssh reverse tunnel in front of that process (Cloudflare quick tunnel kept as backup).
 
 Landing page: `GET /` (HTML in `shipcheck/landing.html`). Public preview rate limit: **20 `qa_preview` jobs/day/IP** (loopback unlimited). `SHIPCHECK_PREVIEW_LIMIT_PER_IP` overrides; `0` disables.
 

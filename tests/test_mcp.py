@@ -148,7 +148,7 @@ def test_mcp_origin_localhost_ok() -> None:
     r = client.post(
         "/mcp",
         json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
-        headers={"Accept": ACCEPT, "Origin": "http://127.0.0.1:8787"},
+        headers={"Accept": ACCEPT, "Origin": "http://127.0.0.1:8788"},
     )
     assert r.status_code == 200
     assert r.json()["result"] == {}

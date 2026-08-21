@@ -3,7 +3,7 @@
   "mcpServers": {
     "shipcheck": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://127.0.0.1:8787/mcp"],
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:8788/mcp"],
       "env": {
         "MCP_AUTHORIZATION": "Bearer YOUR_API_KEY"
       }

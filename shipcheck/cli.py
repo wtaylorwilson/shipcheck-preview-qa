@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("serve", help="run the HTTP API (inline worker on by default)")
     s.add_argument("--host", default="0.0.0.0")
-    s.add_argument("--port", type=int, default=8787)
+    s.add_argument("--port", type=int, default=8788)
     s.set_defaults(func=cmd_serve)
 
     return p
